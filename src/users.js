@@ -82,4 +82,10 @@ function saveUserInfo(userinfo, output) {
     setToken(userinfo.data.id, output.data.access_token, output.data.refresh_token, expires, userinfo.data.username)
 }
 
-module.exports = {validateUser, refreshUser, retrieveUser, isTokenExpired, saveUserInfo}
+
+// Retrieve Username From UserID
+function getUserNameFromUserID(userID) {
+    return getToken(userID)["username"]
+}
+
+module.exports = {validateUser, refreshUser, retrieveUser, isTokenExpired, saveUserInfo, getUserNameFromUserID}
