@@ -6,7 +6,7 @@ const cookieParser = require('cookie-parser');
 
 // Current Project Imports
 const { getToken } = require('./tokenStore')
-const { validateUser, refreshUser,  isTokenExpired } = require('./users')
+const { validateUser, refreshUser,  isTokenExpired, retrieveUser, getUserNameFromUserID } = require('./users')
 // App Variables
 const port = process.env.port || 1500;
 const app = express();
@@ -45,8 +45,23 @@ app.get('/api/auth/discord/redirect', async (req, res) => {
         }
     }
     
-    res.send(`Hello, ${getToken(userID)["username"]}`)
+    res.send(`Hello, ${getUserNameFromUserID(userID)}`)
 });
 
+// Voice Related
+app.get('/voice', async (req, res) => {
+    let userID = req.cookies?.userID;
+    console.log(userID)
+    if (!userID) {
+        res.redirect("/error")
+    } else {
+        res.send(`Hello, ${getUserNameFromUserID(userID)}`)
+    }
+})
+
+// Failed Login
+app.get('/error', async (req, res) => {
+    res.send("Please Login Using:", "https://discord.com/oauth2/authorize?client_id=1468061028008067174&response_type=code&redirect_uri=http%3A%2F%2Flocalhost%3A1500%2Fapi%2Fauth%2Fdiscord%2Fredirect&scope=identify+guilds+connections+email+guilds.join+gdm.join+voice")
+})
 // App Start Logic
 app.listen(port, () => {console.log(`Running on ${port}`)})
