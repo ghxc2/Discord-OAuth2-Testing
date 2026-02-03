@@ -6,7 +6,7 @@ const cookieParser = require('cookie-parser');
 
 // Current Project Imports
 const { getToken } = require('./tokenStore')
-const { validateUser, refreshUser,  isTokenExpired, retrieveUser, getUserNameFromUserID } = require('./users')
+const { validateUser, refreshUser,  isTokenExpired, retrieveUser, getUserNameFromUserID, checkToken} = require('./users')
 // App Variables
 const port = process.env.port || 1500;
 const app = express();
@@ -54,9 +54,13 @@ app.get('/voice', async (req, res) => {
     console.log(userID)
     if (!userID) {
         res.redirect("/error")
-    } else {
-        res.send(`Hello, ${getUserNameFromUserID(userID)}`)
     }
+    // Assure User Token Valid
+    checkToken(userID)
+
+    
+    res.send(`Hello, ${getUserNameFromUserID(userID)}`)
+    
 })
 
 // Failed Login

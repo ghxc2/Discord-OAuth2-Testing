@@ -88,4 +88,11 @@ function getUserNameFromUserID(userID) {
     return getToken(userID)["username"]
 }
 
-module.exports = {validateUser, refreshUser, retrieveUser, isTokenExpired, saveUserInfo, getUserNameFromUserID}
+// Check if Token is Timed Out then Refresh If So
+async function checkToken(userID) {
+    if (isTokenExpired(userID)) {
+        await refreshUser(userID)
+    }
+}
+
+module.exports = {validateUser, refreshUser, retrieveUser, isTokenExpired, saveUserInfo, getUserNameFromUserID, checkToken}
