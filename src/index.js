@@ -1,22 +1,34 @@
+// Imports
 require('dotenv').config();
 const express = require('express');
 const axios = require('axios');
 const url = require('url');
 const cookieParser = require('cookie-parser');
 
+// Current Project Imports
 const {setToken, getToken } = require('./tokenStore')
 
+// App Variables
 const port = process.env.port || 1500;
 const app = express();
 
 // Allows App to use Cookies
 app.use(cookieParser())
+
+// Home Page
 app.get('/', async (req, res) => {
     res.send("Welcome")
 })
+
+// Page Directed To From Discord Link
 app.get('/api/auth/discord/redirect', async (req, res) => {
     const { code } = req.query;
     let userID = req.cookies?.userID;
+    console.log(userID)
+    if (!userID) {
+        res.clearCookie("userID")
+        userID = null
+    }
     if (userID) {
         try {
             if (isTokenExpired(userID)) {
@@ -30,13 +42,14 @@ app.get('/api/auth/discord/redirect', async (req, res) => {
     } else {
         if (code) {
             userID = await validateUser(code)
-            res.cookie('userID', userID)
+            res.cookie("userID", userID)
         }
     }
     
     res.send(`Hello, ${getToken(userID)["username"]}`)
 });
 
+// Retrieves User Data for Uncached User
 async function validateUser(code) {
 
     // Form to Retrieve Token
@@ -59,12 +72,13 @@ async function validateUser(code) {
     // If Successfully Retrieved Token
     if (output.data) {
         const userinfo = await retrieveUser(output.data.access_token)
-        saveUserInfo(userinfo)
+        saveUserInfo(userinfo, output)
         return userinfo.data.id
     }
     
 }
 
+// Refresh Token For Cached Player
 async function refreshUser(username) {
 
     const data = getToken(username)
@@ -87,10 +101,11 @@ async function refreshUser(username) {
     // If Successfully Retrieved Token
     if (refresh.data) {
         const userinfo = await retrieveUser(refresh.data.access_token)
-        saveUserInfo(userinfo)
+        saveUserInfo(userinfo, refresh)
     }
 }
 
+// Determines if Token of Cached Player is Expired
 function isTokenExpired(userID) {
     return Date.now() > getToken(userID)["expires"]
 }
@@ -108,11 +123,12 @@ async function retrieveUser(token) {
     return userinfo
 }
 
-function saveUserInfo(userinfo) {
+// Saves User information To Cache, Use this instead of setToken directly for safer caching
+function saveUserInfo(userinfo, output) {
     // Logic To Save Token to Memory
-    const expires = Math.floor(Date.now() / 1000) + userinfo.data.expires_in
-    console.log(userinfo.data)
-    setToken(userinfo.data.id, userinfo.data.access_token, userinfo.data.refresh_token, expires, userinfo.data.username)
+    const expires = Math.floor(Date.now() / 1000) + output.data.expires_in
+    setToken(userinfo.data.id, output.data.access_token, output.data.refresh_token, expires, userinfo.data.username)
 }
 
+// App Start Logic
 app.listen(port, () => {console.log(`Running on ${port}`)})
