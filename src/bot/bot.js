@@ -3,7 +3,7 @@ require('dotenv').config();
 const fs = require('fs');
 const path = require('path');
 const { getVoiceConnection, EndBehaviorType } = require('@discordjs/voice');
-
+// Discord Many Imports
 const {
 	Client,
 	GatewayIntentBits,
@@ -40,14 +40,24 @@ for (const file of commandFiles) {
 
 // Command Executer 
 client.on(Events.InteractionCreate, async (interaction) => {
+	// If Not Command
 	if (!interaction.isChatInputCommand()) return;
+
+	// Get Command
 	const command = interaction.client.commands.get(interaction.commandName);
+	
+	// If Command Invalid
 	if (!command) {
 		console.error(`No command matching ${interaction.commandName} was found.`);
 		return;
 	}
+
+	// Try To Run Command
 	try {
 		await command.execute(interaction);
+	
+	// Command Run Error
+	// Inform of Fail
 	} catch (error) {
 		console.error(error);
 		if (interaction.replied || interaction.deferred) {
@@ -69,18 +79,8 @@ async function registerCommands() {
 	const commands = client.commands.map((command) => command.data.toJSON());
 	const rest = new REST({ version: '10' }).setToken(process.env.TOKEN);
 	const appId = process.env.WEB_CLIENT_ID;
-	const guildId = process.env.GUILD_ID;
 
-	if (!appId) {
-		throw new Error("Missing WEB_CLIENT_ID in environment variables.");
-	}
-
-	if (guildId) {
-		await rest.put(Routes.applicationGuildCommands(appId, guildId), { body: commands });
-		console.log(`Registered ${commands.length} guild command(s) to ${guildId}.`);
-		return;
-	}
-
+	// PUT Commands
 	await rest.put(Routes.applicationCommands(appId), { body: commands });
 	console.log(`Registered ${commands.length} global command(s).`);
 }
