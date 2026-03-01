@@ -3,6 +3,17 @@ require('dotenv').config();
 const fs = require('fs');
 const path = require('path');
 const { getVoiceConnection, EndBehaviorType } = require('@discordjs/voice');
+
+// Local Imports
+const {
+	initVoicePresence,
+	getUserVoiceGuild,
+	getUserVoiceChannel,
+	getUsersForChannel,
+	addUserToVoicePresence,
+	removeUserFromVoicePresence,
+} = require("./voicePresence");
+
 // Discord Many Imports
 const {
 	Client,
@@ -13,7 +24,7 @@ const {
 	REST,
 	Routes,
 } = require("discord.js");
-const { resolve } = require('dns');
+
 const client = new Client({
     intents: [
         GatewayIntentBits.Guilds,
@@ -23,6 +34,8 @@ const client = new Client({
         GatewayIntentBits.GuildVoiceStates
     ]
 })
+
+
 
 // Gather Commands from commands folder
 client.commands = new Collection();
@@ -86,6 +99,86 @@ async function registerCommands() {
 	consoleLogger(`Registered ${commands.length} global command(s).`);
 }
 
+// Voice state listener
+client.on(Events.VoiceStateUpdate, (oldState, newState) => {
+	const userId = newState.id;
+	const guildId = newState.guildId;
+	const channelId = newState.channelId;
+
+	const disconnected = !!oldState.channelId && oldState.channelId !== newState.channelId;
+
+	if (disconnected) {
+		removeUserFromVoicePresence(userId);
+		return;
+	}
+
+	const connected = !oldState.channelId && !!newState.channelId;
+	if (connected) {
+		addUserToVoicePresence(userId, guildId, newState.channelId);
+	}
+
+	const moved = !!oldState.channelId && !!newState.channelId && oldState.channelId !== newState.channelId;
+	if (moved) {
+		addUserToVoicePresence(userId, guildId, newState.channelId);
+	}
+
+	const newMuted = newState.serverMute || newState.selfMute;
+	const oldMuted = oldState.serverMute || oldState.selfMute;
+	if (oldMuted !== newMuted) {
+		client.emit('voiceActivity', {
+			type: newMuted ? 'mute' : 'unmute',
+			guildId,
+			channelId,
+			userId,
+			username: newState.member?.user?.username ?? userId,
+			at: Date.now(),
+		});
+	}
+
+	const newDeafened = newState.serverDeaf || newState.selfDeaf;
+	const oldDeafened = oldState.serverDeaf || oldState.selfDeaf;
+	if (oldDeafened !== newDeafened) {
+		client.emit('voiceActivity', {
+			type: newDeafened ? 'deaf' : 'undeaf',
+			guildId,
+			channelId,
+			userId,
+			username: newState.member?.user?.username ?? userId,
+			at: Date.now(),
+		});
+	}
+});
+
+// Return All Users In User's Voice
+async function getVoiceUsers(id) {
+	const users = []
+	try {
+		// Guild Validation
+		const guildId = getUserVoiceGuild(id)
+		const channelId = getUserVoiceChannel(id)
+		const guild = client.guilds.cache.get(guildId)
+		if (!guild || !channelId) return users
+
+		// Get users from voicePresence inverse index instead of channel member iteration.
+		const userIds = getUsersForChannel(guildId, channelId);
+		for (const userId of userIds) {
+			const member = guild.members.cache.get(userId) ?? await guild.members.fetch(userId).catch(() => null);
+			if (!member) continue;
+
+			users.push({
+				userId,
+				username: member.user?.username ?? userId,
+				avatarUrl: member.user.displayAvatarURL({ extension: 'png', size: 64 }),
+			})
+		}
+	} catch (err) {
+		consoleLogger("Invalid Voice Users Request")
+	}
+	return users
+
+	
+}
+
 // Ready Printer
 client.once(Events.ClientReady, async (c) => {
 	consoleLogger(`${c.user.username} Is Ready`)
@@ -123,11 +216,12 @@ process.on('SIGTERM', () => shutdown('SIGTERM'));
 // Returns Active Bot Client
 async function startBot() {
 	// Start Bot
-	client.login(process.env.TOKEN)
+	await client.login(process.env.TOKEN)
 
 	// Wait until Bot is Ready
 	await new Promise((resolve) => client.once(Events.ClientReady, resolve))
-
+	initVoicePresence(client.user.id)
+	client.getVoiceUsers = getVoiceUsers
 	// Return Client
 	return client
 }
@@ -137,4 +231,4 @@ function consoleLogger(message) {
 	console.info(`[Bot] ${message}`)
 }
 
-module.exports = { startBot }
+module.exports = { startBot, getVoiceUsers }

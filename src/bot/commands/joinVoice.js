@@ -1,5 +1,19 @@
-const { SlashCommandBuilder, Events, NewsChannel } = require('discord.js')
+const { SlashCommandBuilder } = require('discord.js')
 const { joinVoiceChannel, getVoiceConnection } = require('@discordjs/voice');
+
+const { addUserToVoicePresence, removeUserFromVoicePresence, getUsersForChannel } = require("../voicePresence")
+
+function emitVoiceActivity({ client, interaction, type, userId, guildId, channelId }) {
+    const member = interaction.guild.members.cache.get(userId)
+    client.emit('voiceActivity', {
+        type,
+        guildId,
+        channelId,
+        userId,
+        username: member?.user?.username ?? userId,
+        at: Date.now(),
+    });
+}
 
 // Module To Run
 module.exports = {
@@ -12,9 +26,21 @@ module.exports = {
     async execute(interaction) {
         
         // Destroy Any Existing Voice Connection
+        // Assure Removing Users From Memory that May have been in channel
         const existing = getVoiceConnection(interaction.guild.id);
         if (existing) {
-            existing.destroy(); // leave current channel
+            const oldGuildId = existing.joinConfig?.guildId;
+            const oldChannelId = existing.joinConfig?.channelId;
+            try {
+                if (oldGuildId && oldChannelId) {
+                    const userIds = getUsersForChannel(oldGuildId, oldChannelId);
+                    for (const userId of userIds) {
+                        removeUserFromVoicePresence(userId);
+                    }
+                }
+            } finally {
+                existing.destroy(); // leave current channel
+            }
         }
 
         // Get User and VC they're in
@@ -39,59 +65,34 @@ module.exports = {
             selfDeaf: false
         })
 
+        for (const [memberId] of vc.members ) {
+            addUserToVoicePresence(memberId, interaction.guildId, vc.id)
+        }
+
         // Voice Event Logic
 
         // On Green Circle Start
         connection.receiver.speaking.on('start', (userId) => {
-            client.emit('voiceActivity', {
+            emitVoiceActivity({
+                client,
+                interaction,
                 type: 'start',
-                guildId: interaction.guildId,
-                channelId: interaction.member.voice.channelId,
+                guildId: connection.joinConfig.guildId,
+                channelId: connection.joinConfig.channelId,
                 userId,
-                at: Date.now(),
-            });
+            })
         });
         
         // On Green Circle Ending
         connection.receiver.speaking.on('end', (userId) => {
-            client.emit('voiceActivity', {
+            emitVoiceActivity({
+                client,
+                interaction,
                 type: 'end',
-                guildId: interaction.guildId,
-                channelId: interaction.member.voice.channelId,
+                guildId: connection.joinConfig.guildId,
+                channelId: connection.joinConfig.channelId,
                 userId,
-                at: Date.now(),
-            });
+            })
         });
-        
-        // Mute and Deafened Events
-        client.on(Events.VoiceStateUpdate, (oldState, newState) => {
-            const userId = newState.id
-            const guildId = newState.guildId
-            const channelId = newState.channelId
-
-            const newMuted = newState.serverMute || newState.selfMute
-            const oldMuted = oldState.serverMute || oldState.selfMute
-            if (oldMuted !== newMuted) {
-                client.emit('voiceActivity', {
-                    type: newMuted ? 'mute' : 'unmute',
-                    guildId,
-                    channelId,
-                    userId,
-                    at: Date.now(),
-                });
-            }
-
-            const newDeafened = newState.serverDeaf || newState.selfDeaf
-            const oldDeafened = oldState.serverDeaf || oldState.selfDeaf
-            if (oldDeafened !== newDeafened) {
-                client.emit('voiceActivity', {
-                    type: newDeafened ? 'deaf' : 'undeaf',
-                    guildId,
-                    channelId,
-                    userId,
-                    at: Date.now(),
-                });
-            }
-        })
     }
 }

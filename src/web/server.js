@@ -5,8 +5,8 @@ const cookieParser = require('cookie-parser');
 const path = require('path');
 
 // Current Project Imports
-const { validateUser, refreshUser, isTokenExpired, getUserNameFromUserID, checkToken } = require('./users');
-const { getCookieUsername, buildCookieUserID } = require('./cookies');
+const { validateUser, refreshUser, isTokenExpired, getUserNameFromUserID } = require('./users');
+const { getCookieUsername, buildCookieUserID, validateCookie } = require('./cookies');
 const { getConfigsForOwner, saveConfig } = require('./database/userConfigDatabase')
 
 function setupWeb({ app }) {
@@ -66,8 +66,8 @@ function setupWeb({ app }) {
     // Voice Related
     app.get('/voice', async (req, res) => {
         try {
-            const userID = await validateCookie(req)
-            username = getUserNameFromUserID(userID)
+            const userID = await validateCookie(req, res)
+            const username = getUserNameFromUserID(userID)
             res.render('voice', { 
                 username,
                 users: Object.values(app.locals.users),
@@ -91,14 +91,49 @@ function setupWeb({ app }) {
     // Static Files
     app.use('/static', express.static(path.join(__dirname, 'public')));
     
-    app.use('/settings', async (req, res) => {
+    app.get('/settings', async (req, res) => {
         try {
-            const userID = await validateCookie(req)
-            username = getUserNameFromUserID(userID)
+            const ownerUserId = await validateCookie(req, res)
+            const username = getUserNameFromUserID(ownerUserId)
+            const users = await app.locals.botClient.getVoiceUsers(ownerUserId)
+            const configs = getConfigsForOwner(ownerUserId)
+            const configMap = Object.fromEntries(
+                configs.map((cfg) => [cfg.target_user_id, cfg])
+            )
+            const userMap = Object.fromEntries(
+                users.map((u) => [u.userId, u])
+            )
+
             res.render('settings', { 
                 username,
-                users: Object.values(app.locals.users),
+                users,
+                configs,
+                configMap,
+                userMap,
             })
+        } catch (err) {
+            return;
+        }
+    })
+
+    app.post('/settings/config/:targetUserId', async (req, res) => {
+        try {
+            const ownerUserId = await validateCookie(req, res)
+            const targetUserId = req.params.targetUserId
+            const nickname = (req.body.nickname ?? '').trim()
+
+            if (!targetUserId) {
+                return res.status(400).send('Missing target user ID');
+            }
+
+            saveConfig({
+                ownerUserId,
+                targetUserId,
+                nickname: nickname || null,
+                avatarPath: null,
+            })
+
+            return res.redirect('/settings')
         } catch (err) {
             return;
         }
@@ -201,25 +236,6 @@ function startWeb({ client }) {
     app.listen(port, () => { consoleLogger(`Running on ${port}`) })
 }
 
-// Validate Cookie
-async function validateCookie(req) {
-    const userID = req.cookies?.userID;
-    if (!userID) {
-        redirectError(res)
-        throw new Error("Invalid ID")
-    }
-
-    try {
-        // Assure User Token Valid
-        await checkToken(userID)
-    } catch (e) {
-        console.error("Token check failed:", e.message)
-        redirectError(res)
-        throw new Error("Invalid ID")
-    }
-
-    return userID
-}
 // Log To Console Marked as Web
 function consoleLogger(message) {
 	console.info(`[Web] ${message}`)

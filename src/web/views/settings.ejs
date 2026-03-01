@@ -1,1 +1,59 @@
-<h1>Hello, <%= username %>, Welcome to /settings</h1>
+<h1>Settings</h1>
+<p>Signed in as <strong><%= username %></strong></p>
+
+<h2>People In Call</h2>
+<% if (users && users.length) { %>
+  <% users.forEach((u) => { %>
+    <form method="post" action="/settings/config/<%= u.userId %>">
+      <h3>
+        <% if (u.avatarUrl) { %>
+          <img src="<%= u.avatarUrl %>" alt="<%= (u.username || u.userId) %> avatar" width="24" height="24" style="vertical-align: middle; border-radius: 50%; margin-right: 8px;" />
+        <% } %>
+        <%= u.username || u.userId %>
+      </h3>
+      <label>
+        Nickname
+        <input
+          type="text"
+          name="nickname"
+          value="<%= (configMap && configMap[u.userId] && configMap[u.userId].nickname) || '' %>"
+          maxlength="32"
+        />
+      </label>
+      <button type="submit">Save</button>
+    </form>
+    <hr />
+  <% }) %>
+<% } else { %>
+  <p>No users currently tracked in voice.</p>
+<% } %>
+
+<h2>Saved Configs</h2>
+<% if (configs && configs.length) { %>
+  <table>
+    <thead>
+      <tr>
+        <th>Target User</th>
+        <th>Nickname</th>
+        <th>Avatar</th>
+      </tr>
+    </thead>
+    <tbody>
+      <% configs.forEach((c) => { %>
+        <tr>
+          <td>
+            <% const displayUser = (userMap && userMap[c.target_user_id]) || null; %>
+            <% if (displayUser && displayUser.avatarUrl) { %>
+              <img src="<%= displayUser.avatarUrl %>" alt="<%= (displayUser.username || c.target_user_id) %> avatar" width="20" height="20" style="vertical-align: middle; border-radius: 50%; margin-right: 6px;" />
+            <% } %>
+            <%= (displayUser && displayUser.username) || c.target_user_id %>
+          </td>
+          <td><%= c.nickname || '-' %></td>
+          <td><%= c.avatar_path || '-' %></td>
+        </tr>
+      <% }) %>
+    </tbody>
+  </table>
+<% } else { %>
+  <p>No saved configs yet.</p>
+<% } %>
