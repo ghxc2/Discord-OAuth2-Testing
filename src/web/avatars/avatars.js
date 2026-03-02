@@ -89,6 +89,19 @@ function deleteExistingTypeFile(dir, assetId, assetType) {
     }
 }
 
+function getSafeReferrerPath(req, fallbackPath) {
+    const ref = req.get('referer') || req.get('referrer')
+    if (typeof ref !== 'string' || !ref.trim()) return fallbackPath
+    try {
+        const origin = `${req.protocol}://${req.get('host')}`
+        const parsed = new URL(ref, origin)
+        if (parsed.origin !== origin) return fallbackPath
+        return `${parsed.pathname}${parsed.search}${parsed.hash}` || fallbackPath
+    } catch (_) {
+        return fallbackPath
+    }
+}
+
 function handleUpload(req, res) {
     const { userId, assetId, assetType } = req.params
     if (!SAFE_SEGMENT_RE.test(userId) || !SAFE_SEGMENT_RE.test(assetId) || !ALLOWED_ASSET_TYPES.has(assetType)) {
@@ -102,7 +115,8 @@ function handleUpload(req, res) {
             return res.status(400).send(err.message)
         } else {
             notifyAvatarChanged(req, userId)
-            return res.redirect(req.get('referer'))
+            const fallbackPath = `/avatars/${userId}/${assetId}/edit`
+            return res.redirect(getSafeReferrerPath(req, fallbackPath))
         }
     })
 }

@@ -26,13 +26,17 @@ function renderPeopleInCall(users) {
 
   const html = users
     .map((u) => {
-      const types = ['avatar', 'speaking', 'muted', 'deafened'];
+      const types = ['speaking', 'avatar', 'muted', 'deafened'];
+      const leadAvatarSrc = u.discordAvatarUrl || '';
+      const leadAvatarHtml = leadAvatarSrc
+        ? `<img src="${leadAvatarSrc}" alt="${escapeHtml(`${u.username || u.userId}-avatar`)}" width="64" height="64" class="avatar-thumb avatar-thumb-64 avatar-thumb-contain mr-6" />`
+        : '';
       const avatarSetHtml = types
         .map((type) => {
           const src = (u.avatarSet && u.avatarSet[type]) || (type === 'avatar' ? u.avatarUrl : '');
           if (!src) return '<span class="ml-6">-</span>';
           const alt = escapeHtml(`${u.username || u.userId}-${type}`);
-          return `<img src="${src}" alt="${alt}" width="128" height="128" class="avatar-thumb avatar-thumb-128 ml-6" />`;
+          return `<img src="${src}" alt="${alt}" width="128" height="128" class="avatar-thumb avatar-thumb-128 avatar-thumb-contain ml-6" />`;
         })
         .join('');
 
@@ -40,6 +44,7 @@ function renderPeopleInCall(users) {
       const editUrl = `/settings/${encodeURIComponent(u.userId)}/edit`;
       return `
         <h3>
+          ${leadAvatarHtml}
           ${userLabel}
           ${avatarSetHtml}
           <a class="ml-8" href="${editUrl}">Edit Settings</a>

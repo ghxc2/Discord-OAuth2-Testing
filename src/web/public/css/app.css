@@ -2,6 +2,10 @@
   display: none;
 }
 
+.is-hidden {
+  display: none;
+}
+
 .inline-form {
   display: inline;
 }
@@ -9,6 +13,10 @@
 .avatar-thumb {
   object-fit: cover;
   vertical-align: middle;
+}
+
+.avatar-thumb-contain {
+  object-fit: contain;
 }
 
 .avatar-thumb-64 {
@@ -60,4 +68,10 @@
 
 .settings-zero-margin {
   margin: 0;
+}
+
+.app-nav {
+  display: flex;
+  gap: 12px;
+  margin-bottom: 12px;
 }

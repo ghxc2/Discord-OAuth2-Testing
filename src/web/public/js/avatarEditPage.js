@@ -1,7 +1,12 @@
 document.querySelectorAll('input.js-auto-submit-upload').forEach((inputEl) => {
   inputEl.addEventListener('change', () => {
     const formEl = inputEl.closest('form');
+    const assetType = inputEl.dataset.assetType || '';
+    const actionPrefix = formEl?.dataset?.uploadActionPrefix || '';
     if (formEl) {
+      if (!assetType || !actionPrefix) return;
+      formEl.method = 'post';
+      formEl.action = `${actionPrefix}/${encodeURIComponent(assetType)}`;
       formEl.submit();
     }
   });

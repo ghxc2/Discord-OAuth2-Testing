@@ -1,4 +1,5 @@
 <link rel="stylesheet" href="/static/css/app.css">
+<%- include('partials/nav') %>
 
 <h1>Hello, <%= username %>, Welcome to /voice</h1>
 <p>
@@ -18,8 +19,8 @@
     <thead>
         <tr>
             <th>User</th>
-            <th>Avatar</th>
             <th>Speaking Avatar</th>
+            <th>Avatar</th>
             <th>Muted Avatar</th>
             <th>Deafened Avatar</th>
             <th>Speaking</th>
@@ -31,13 +32,18 @@
         <% if (users && users.length) { %>
             <% users.forEach((u) => { %>
                 <tr>
-                    <td><%= u.username %></td>
-                    <% const setTypes = ['avatar', 'speaking', 'muted', 'deafened']; %>
+                    <td>
+                        <% if (u.discordAvatarUrl) { %>
+                            <img src="<%= u.discordAvatarUrl %>" alt="<%= `${u.username}-discord-avatar` %>" width="64" height="64" class="avatar-thumb avatar-thumb-64 avatar-thumb-contain mr-6" />
+                        <% } %>
+                        <%= u.username %>
+                    </td>
+                    <% const setTypes = ['speaking', 'avatar', 'muted', 'deafened']; %>
                     <% setTypes.forEach((type) => { %>
                         <% const src = (u.avatarSet && u.avatarSet[type]) || (type === 'avatar' ? u.avatarUrl : null); %>
                         <td>
                             <% if (src) { %>
-                                <img src="<%= src %>" alt="<%= `${u.username}-${type}` %>" width="128" height="128" class="avatar-thumb avatar-thumb-128" />
+                                <img src="<%= src %>" alt="<%= `${u.username}-${type}` %>" width="128" height="128" class="avatar-thumb avatar-thumb-128 avatar-thumb-contain" />
                             <% } else { %>
                                 -
                             <% } %>

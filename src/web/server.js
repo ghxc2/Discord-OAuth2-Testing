@@ -370,6 +370,7 @@ function setupWeb({ app }) {
                 return {
                     userId: u.userId,
                     username: u.username,
+                    discordAvatarUrl: u.avatarUrl || null,
                     speaking: state.speaking,
                     mute: state.mute,
                     deaf: state.deaf,
@@ -538,8 +539,14 @@ function setupWeb({ app }) {
         const avatarSetMap = Object.fromEntries(avatarSetEntries)
         const peopleInCall = voiceUsers.map((u) => {
             const avatarSet = avatarSetMap[u.userId] || null
-            const avatarUrl = pickAvatarForState(avatarSet, {}) || u.avatarUrl || null
-            return { ...u, avatarUrl, avatarSet }
+            const selectedAvatarUrl = pickAvatarForState(avatarSet, {}) || u.avatarUrl || null
+            return {
+                ...u,
+                discordAvatarUrl: u.avatarUrl || null,
+                avatarUrl: selectedAvatarUrl,
+                selectedAvatarUrl,
+                avatarSet,
+            }
         })
         const userMap = Object.fromEntries(
             users.map((u) => {
@@ -860,6 +867,19 @@ function setupWeb({ app }) {
             return;
         }
     });
+
+    // Safety redirect for stale clients submitting bad upload URL.
+    app.get('/avatars/:userId/:assetId/undefined', async (req, res) => {
+        try {
+            const ownerUserId = await validateCookie(req, res)
+            if (ownerUserId !== req.params.userId) {
+                return res.status(403).send('Forbidden');
+            }
+            return res.redirect(`/avatars/${req.params.userId}/${req.params.assetId}/edit`)
+        } catch (err) {
+            return;
+        }
+    })
 }
 
 // Easy Function to Redirect to Error Page

@@ -1,4 +1,5 @@
 <link rel="stylesheet" href="/static/css/app.css">
+<%- include('partials/nav') %>
 
 <div id="avatarsPage" data-owner-user-id="<%= ownerUserId %>">
 <h1>Hello, <%= username %>, Welcome to /avatars</h1>
@@ -18,7 +19,7 @@
     placeholder="e.g. avatar1"
     required
   />
-  <button type="submit">Upload</button>
+  <button type="submit">Create</button>
 </form>
 <h2>Uploaded Avatars</h2>
 <% if (avatars && avatars.length) { %>

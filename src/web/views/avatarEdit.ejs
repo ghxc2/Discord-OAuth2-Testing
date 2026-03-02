@@ -1,4 +1,5 @@
 <link rel="stylesheet" href="/static/css/app.css">
+<%- include('partials/nav') %>
 
 <h1>Hello, <%= username %>, Edit Avatar Set</h1>
 <p>
@@ -58,7 +59,8 @@
               method="post"
               action="/avatars/<%= ownerUserId %>/<%= assetId %>/<%= type %>"
               enctype="multipart/form-data"
-              class="inline-form"
+              class="inline-form js-avatar-upload-form"
+              data-upload-action-prefix="/avatars/<%= ownerUserId %>/<%= assetId %>"
             >
               <input
                 id="<%= type %>File"
@@ -66,6 +68,7 @@
                 type="file"
                 accept="image/png,image/jpeg,image/gif"
                 class="js-auto-submit-upload"
+                data-asset-type="<%= type %>"
               />
             </form>
           </td>

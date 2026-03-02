@@ -52,16 +52,20 @@ function renderTable() {
         const src = (u.avatarSet && u.avatarSet[type]) || (type === 'avatar' ? (u.avatarUrl || pickAvatarForState(u.avatarSet, u) || '') : '');
         if (!src) return '-';
         const alt = escapeHtml(`${u.username ?? u.userId}-${type}`);
-        return `<img src="${src}" alt="${alt}" width="128" height="128" class="avatar-thumb avatar-thumb-128" />`;
+        return `<img src="${src}" alt="${alt}" width="128" height="128" class="avatar-thumb avatar-thumb-128 avatar-thumb-contain" />`;
       };
 
       const userLabel = escapeHtml(u.username ?? u.userId);
+      const discordAvatarSrc = u.discordAvatarUrl || '';
+      const userCell = discordAvatarSrc
+        ? `<img src="${discordAvatarSrc}" alt="${escapeHtml(`${u.username ?? u.userId}-discord-avatar`)}" width="64" height="64" class="avatar-thumb avatar-thumb-64 avatar-thumb-contain mr-6" />${userLabel}`
+        : userLabel;
 
       return `
       <tr>
-        <td>${userLabel}</td>
-        <td>${renderAvatarCell('avatar')}</td>
+        <td>${userCell}</td>
         <td>${renderAvatarCell('speaking')}</td>
+        <td>${renderAvatarCell('avatar')}</td>
         <td>${renderAvatarCell('muted')}</td>
         <td>${renderAvatarCell('deafened')}</td>
         <td>${yesNo(u.speaking)}</td>
