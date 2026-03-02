@@ -3,8 +3,18 @@
 const voiceStatus = document.getElementById('voiceStatus');
 const voiceTableBody = document.getElementById('voiceTableBody');
 const voiceWarning = document.getElementById('voiceWarning');
+const initialUsersEncoded = voiceTableBody?.dataset?.initialUsers || '';
 
 const usersById = {}; // local UI cache
+
+function escapeHtml(value) {
+  return String(value ?? '')
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#39;');
+}
 
 function yesNo(v) {
   return v ? 'Yes' : 'No';
@@ -41,12 +51,15 @@ function renderTable() {
       const renderAvatarCell = (type) => {
         const src = (u.avatarSet && u.avatarSet[type]) || (type === 'avatar' ? (u.avatarUrl || pickAvatarForState(u.avatarSet, u) || '') : '');
         if (!src) return '-';
-        return `<img src="${src}" alt="${u.username ?? u.userId}-${type}" width="128" height="128" style="object-fit: cover; border-radius: 8px;" />`;
+        const alt = escapeHtml(`${u.username ?? u.userId}-${type}`);
+        return `<img src="${src}" alt="${alt}" width="128" height="128" class="avatar-thumb avatar-thumb-128" />`;
       };
+
+      const userLabel = escapeHtml(u.username ?? u.userId);
 
       return `
       <tr>
-        <td>${u.username ?? u.userId}</td>
+        <td>${userLabel}</td>
         <td>${renderAvatarCell('avatar')}</td>
         <td>${renderAvatarCell('speaking')}</td>
         <td>${renderAvatarCell('muted')}</td>
@@ -60,8 +73,17 @@ function renderTable() {
     .join('');
 }
 
-if (Array.isArray(window.__INITIAL_VOICE_USERS__)) {
-  window.__INITIAL_VOICE_USERS__.forEach((u) => {
+const initialUsers = (() => {
+  if (!initialUsersEncoded) return [];
+  try {
+    return JSON.parse(decodeURIComponent(initialUsersEncoded));
+  } catch (_) {
+    return [];
+  }
+})();
+
+if (Array.isArray(initialUsers)) {
+  initialUsers.forEach((u) => {
     usersById[u.userId] = u;
   });
   renderTable();
@@ -98,7 +120,7 @@ stream.onerror = () => {
 function updateVoiceWarning(status) {
   if (!voiceWarning) return;
   const showWarning = !!status?.userInVoice && !status?.inSameChannel;
-  voiceWarning.style.display = showWarning ? '' : 'none';
+  voiceWarning.classList.toggle('is-hidden', !showWarning);
 }
 
 async function refreshVoiceWarning() {

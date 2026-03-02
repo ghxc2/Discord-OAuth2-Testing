@@ -11,6 +11,8 @@ const { getAvatarPath } = require('../database/userConfigDatabase')
 const uploadRoot = path.join(__dirname, '..', 'user-data', 'uploads')
 const muteIconPath = path.join(__dirname, 'icons', 'mute.png')
 const deafIconPath = path.join(__dirname, 'icons', 'deaf.png')
+const SAFE_SEGMENT_RE = /^[A-Za-z0-9_-]{1,64}$/
+const ALLOWED_ASSET_TYPES = new Set(['avatar', 'speaking', 'muted', 'deafened'])
 
 // File Structure
 // - user-data
@@ -25,23 +27,34 @@ const deafIconPath = path.join(__dirname, 'icons', 'deaf.png')
 const upload = multer({
     storage: multer.diskStorage({
         destination: (req, file, cb) => {
-            const dir = generateAvatarPath(req.userId, req.assetId)
-            fs.mkdirSync(dir, { recursive: true })
-            cb(null, dir)
+            try {
+                const dir = generateAvatarPath(req.userId, req.assetId)
+                fs.mkdirSync(dir, { recursive: true })
+                cb(null, dir)
+            } catch (err) {
+                cb(err)
+            }
         },
         filename: (req, file, cb) => {
-            const ext = path.extname(file.originalname).toLowerCase()
-            const safeExt = ['.png', '.jpg', '.jpeg', '.gif'].includes(ext) ? ext : '.bin';
-            const typeFromField = {
-                avatars: req.assetType,
-                avatarFile: 'avatar',
-                speakingFile: 'speaking',
-                mutedFile: 'muted',
-                deafenedFile: 'deafened',
-            }[file.fieldname] || req.assetType || 'avatar'
-            const dir = generateAvatarPath(req.userId, req.assetId)
-            deleteExistingTypeFile(dir, req.assetId, typeFromField)
-            cb(null, `${req.assetId}_${typeFromField}${safeExt}`)
+            try {
+                const ext = path.extname(file.originalname).toLowerCase()
+                const safeExt = ['.png', '.jpg', '.jpeg', '.gif'].includes(ext) ? ext : '.bin';
+                const typeFromField = {
+                    avatars: req.assetType,
+                    avatarFile: 'avatar',
+                    speakingFile: 'speaking',
+                    mutedFile: 'muted',
+                    deafenedFile: 'deafened',
+                }[file.fieldname] || req.assetType || 'avatar'
+                if (!ALLOWED_ASSET_TYPES.has(typeFromField)) {
+                    throw new Error('Invalid asset type')
+                }
+                const dir = generateAvatarPath(req.userId, req.assetId)
+                deleteExistingTypeFile(dir, req.assetId, typeFromField)
+                cb(null, `${req.assetId}_${typeFromField}${safeExt}`)
+            } catch (err) {
+                cb(err)
+            }
         },
     }),
     limits: { fileSize: 2 * 1024 * 1024}, // 2MB for now
@@ -52,7 +65,14 @@ const upload = multer({
 })
 
 function generateAvatarPath(userId, assetId) {
-    const dir = path.join(uploadRoot, userId, assetId)
+    if (!SAFE_SEGMENT_RE.test(userId) || !SAFE_SEGMENT_RE.test(assetId)) {
+        throw new Error('Invalid path segment')
+    }
+    const userRoot = path.resolve(uploadRoot, userId)
+    const dir = path.resolve(userRoot, assetId)
+    if (!(dir === userRoot || dir.startsWith(userRoot + path.sep))) {
+        throw new Error('Invalid path')
+    }
     return dir
 }
 
@@ -71,6 +91,9 @@ function deleteExistingTypeFile(dir, assetId, assetType) {
 
 function handleUpload(req, res) {
     const { userId, assetId, assetType } = req.params
+    if (!SAFE_SEGMENT_RE.test(userId) || !SAFE_SEGMENT_RE.test(assetId) || !ALLOWED_ASSET_TYPES.has(assetType)) {
+        return res.status(400).send('Invalid upload path')
+    }
     req.userId = userId
     req.assetId = assetId
     req.assetType = assetType
@@ -78,6 +101,7 @@ function handleUpload(req, res) {
         if (err) {
             return res.status(400).send(err.message)
         } else {
+            notifyAvatarChanged(req, userId)
             return res.redirect(req.get('referer'))
         }
     })
@@ -85,6 +109,9 @@ function handleUpload(req, res) {
 
 function handleEditUpload(req, res) {
     const { userId, assetId } = req.params
+    if (!SAFE_SEGMENT_RE.test(userId) || !SAFE_SEGMENT_RE.test(assetId)) {
+        return res.status(400).send('Invalid upload path')
+    }
     req.userId = userId
     req.assetId = assetId
 
@@ -97,8 +124,15 @@ function handleEditUpload(req, res) {
         if (err) {
             return res.status(400).send(err.message)
         }
+        notifyAvatarChanged(req, userId)
         return res.redirect(`/avatars/${userId}/${assetId}/edit`)
     })
+}
+
+function notifyAvatarChanged(req, ownerUserId) {
+    req.app?.locals?.pushVoiceUpdate?.(ownerUserId).catch(() => {})
+    req.app?.locals?.pushKeyedVoiceUpdateAll?.().catch(() => {})
+    req.app?.locals?.pushSettingsUpdate?.(ownerUserId).catch(() => {})
 }
 
 function getAllAvatarsForUser(userId) {
@@ -169,6 +203,9 @@ function deleteAvatarDirectory(userId, assetId) {
 }
 
 function deleteAvatarTypeFile(userId, assetId, assetType) {
+    if (!ALLOWED_ASSET_TYPES.has(assetType)) {
+        throw new Error('Invalid asset type')
+    }
     const dir = generateAvatarPath(userId, assetId)
     deleteExistingTypeFile(dir, assetId, assetType)
 }

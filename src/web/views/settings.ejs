@@ -1,167 +1,89 @@
-<h1>Settings</h1>
-<p>Signed in as <strong><%= username %></strong></p>
-<div>
-  Display Key:
-  <button type="button" id="showDisplayKeyBtn">Click to View Display Key</button>
-  <strong id="displayKeyValue" style="display: none;"><%= displayKey || 'Unavailable' %></strong>
-  <button type="button" id="copyDisplayUrlBtn">Copy Display URL</button>
-  <form method="post" action="/settings/display-key/rotate" style="display: inline;" onsubmit="return confirm('Rotate display key? Existing display URLs will stop working.');">
-    <button type="submit">Rotate Display Key</button>
-  </form>
-  <span id="copyDisplayUrlStatus" style="display: none;">Copied</span>
-</div>
+<link rel="stylesheet" href="/static/css/app.css">
 
-<h2>People In Call</h2>
-<div id="people-in-call">
-  <% if (peopleInCall && peopleInCall.length) { %>
-    <% peopleInCall.forEach((u) => { %>
-      <% const setTypes = ['avatar', 'speaking', 'muted', 'deafened']; %>
-      <h3>
-        <%= u.username || u.userId %>
-        <% setTypes.forEach((type) => { %>
-          <% const src = (u.avatarSet && u.avatarSet[type]) || (type === 'avatar' ? u.avatarUrl : null); %>
-          <% if (src) { %>
-            <img src="<%= src %>" alt="<%= `${(u.username || u.userId)}-${type}` %>" width="128" height="128" style="vertical-align: middle; border-radius: 8px; margin-left: 6px;" />
-          <% } else { %>
-            <span style="margin-left: 6px;">-</span>
-          <% } %>
+<div id="settingsPage" data-display-url="<%- encodeURIComponent(displayUrl || '') %>">
+  <h1>Settings</h1>
+  <p>Signed in as <strong><%= username %></strong></p>
+  <div>
+    Display Key:
+    <button type="button" id="showDisplayKeyBtn">Click to View Display Key</button>
+    <strong id="displayKeyValue" class="hidden"><%= displayKey || 'Unavailable' %></strong>
+    <button type="button" id="copyDisplayUrlBtn">Copy Display URL</button>
+    <form method="post" action="/settings/display-key/rotate" class="inline-form" id="rotateDisplayKeyForm">
+      <button type="submit">Rotate Display Key</button>
+    </form>
+    <span id="copyDisplayUrlStatus" class="hidden">Copied</span>
+  </div>
+
+  <h2>People In Call</h2>
+  <div id="people-in-call">
+    <% if (peopleInCall && peopleInCall.length) { %>
+      <% peopleInCall.forEach((u) => { %>
+        <% const setTypes = ['avatar', 'speaking', 'muted', 'deafened']; %>
+        <h3>
+          <%= u.username || u.userId %>
+          <% setTypes.forEach((type) => { %>
+            <% const src = (u.avatarSet && u.avatarSet[type]) || (type === 'avatar' ? u.avatarUrl : null); %>
+            <% if (src) { %>
+              <img src="<%= src %>" alt="<%= `${(u.username || u.userId)}-${type}` %>" width="128" height="128" class="avatar-thumb avatar-thumb-128 ml-6" />
+            <% } else { %>
+              <span class="ml-6">-</span>
+            <% } %>
+          <% }) %>
+          <a class="ml-8" href="/settings/<%= encodeURIComponent(u.userId) %>/edit">Edit Settings</a>
+        </h3>
+        <hr />
+      <% }) %>
+    <% } else { %>
+      <p>No users currently tracked in voice.</p>
+    <% } %>
+  </div>
+
+  <h2>Saved Configs</h2>
+  <% if (configs && configs.length) { %>
+    <table>
+      <thead>
+        <tr>
+          <th>Target User</th>
+          <th>Nickname</th>
+          <th>Avatar</th>
+          <th>Speaking</th>
+          <th>Muted</th>
+          <th>Deafened</th>
+          <th>Actions</th>
+        </tr>
+      </thead>
+      <tbody>
+        <% configs.forEach((c) => { %>
+          <tr>
+            <td>
+              <% const displayUser = (userMap && userMap[c.target_user_id]) || null; %>
+              <% if (displayUser && displayUser.avatarUrl) { %>
+                <img src="<%= displayUser.avatarUrl %>" alt="<%= (displayUser.username || c.target_user_id) %> avatar" width="64" height="64" class="avatar-thumb avatar-thumb-64 mr-6" />
+              <% } %>
+              <%= (displayUser && displayUser.username) || c.target_user_id %>
+            </td>
+            <td><%= c.nickname || '-' %></td>
+            <% const setTypes = ['avatar', 'speaking', 'muted', 'deafened']; %>
+            <% setTypes.forEach((type) => { %>
+              <% const src = (displayUser && displayUser.selectedAvatarSet && displayUser.selectedAvatarSet[type]) || (type === 'avatar' ? (displayUser && (displayUser.selectedAvatarUrl || displayUser.avatarUrl)) : null); %>
+              <td>
+                <% if (src) { %>
+                  <img src="<%= src %>" alt="<%= `${(displayUser && displayUser.username) || c.target_user_id}-${type}` %> avatar" width="128" height="128" class="avatar-thumb avatar-thumb-128" />
+                <% } else { %>
+                  -
+                <% } %>
+              </td>
+            <% }) %>
+            <td>
+              <a href="/settings/<%= encodeURIComponent(c.target_user_id) %>/edit">Edit Settings</a>
+            </td>
+          </tr>
         <% }) %>
-        <button
-          type="button"
-          onclick="window.location.href='/settings/<%= encodeURIComponent(u.userId) %>/edit'"
-          style="margin-left: 8px;"
-        >
-          Edit Settings
-        </button>
-      </h3>
-      <hr />
-    <% }) %>
+      </tbody>
+    </table>
   <% } else { %>
-    <p>No users currently tracked in voice.</p>
+    <p>No saved configs yet.</p>
   <% } %>
 </div>
 
-<h2>Saved Configs</h2>
-<% if (configs && configs.length) { %>
-  <table>
-    <thead>
-      <tr>
-        <th>Target User</th>
-        <th>Nickname</th>
-        <th>Avatar</th>
-        <th>Speaking</th>
-        <th>Muted</th>
-        <th>Deafened</th>
-        <th>Actions</th>
-      </tr>
-    </thead>
-    <tbody>
-      <% configs.forEach((c) => { %>
-        <tr>
-          <td>
-            <% const displayUser = (userMap && userMap[c.target_user_id]) || null; %>
-            <% if (displayUser && displayUser.avatarUrl) { %>
-              <img src="<%= displayUser.avatarUrl %>" alt="<%= (displayUser.username || c.target_user_id) %> avatar" width="64" height="64" style="vertical-align: middle; border-radius: 6px; margin-right: 6px;" />
-            <% } %>
-            <%= (displayUser && displayUser.username) || c.target_user_id %>
-          </td>
-          <td><%= c.nickname || '-' %></td>
-          <% const setTypes = ['avatar', 'speaking', 'muted', 'deafened']; %>
-          <% setTypes.forEach((type) => { %>
-            <% const src = (displayUser && displayUser.selectedAvatarSet && displayUser.selectedAvatarSet[type]) || (type === 'avatar' ? (displayUser && (displayUser.selectedAvatarUrl || displayUser.avatarUrl)) : null); %>
-            <td>
-              <% if (src) { %>
-                <img src="<%= src %>" alt="<%= `${(displayUser && displayUser.username) || c.target_user_id}-${type}` %> avatar" width="128" height="128" style="vertical-align: middle; border-radius: 8px;" />
-              <% } else { %>
-                -
-              <% } %>
-            </td>
-          <% }) %>
-          <td>
-            <button
-              type="button"
-              onclick="window.location.href='/settings/<%= encodeURIComponent(c.target_user_id) %>/edit'"
-            >
-              Edit Settings
-            </button>
-          </td>
-        </tr>
-      <% }) %>
-    </tbody>
-  </table>
-<% } else { %>
-  <p>No saved configs yet.</p>
-<% } %>
-
-<script>
-  const peopleInCallEl = document.getElementById('people-in-call');
-
-  function renderPeopleInCall(users) {
-    if (!users || users.length === 0) {
-      peopleInCallEl.innerHTML = '<p>No users currently tracked in voice.</p>';
-      return;
-    }
-
-    const html = users.map((u) => {
-      const types = ['avatar', 'speaking', 'muted', 'deafened'];
-      const avatarSetHtml = types.map((type) => {
-        const src = (u.avatarSet && u.avatarSet[type]) || (type === 'avatar' ? u.avatarUrl : '');
-        if (!src) return '<span style="margin-left: 6px;">-</span>';
-        return `<img src="${src}" alt="${u.username || u.userId}-${type}" width="128" height="128" style="vertical-align: middle; border-radius: 8px; margin-left: 6px;" />`;
-      }).join('');
-
-      return `
-        <h3>
-          ${u.username || u.userId}
-          ${avatarSetHtml}
-          <button type="button" onclick="window.location.href='/settings/${encodeURIComponent(u.userId)}/edit'" style="margin-left: 8px;">
-            Edit Settings
-          </button>
-        </h3>
-        <hr />
-      `;
-    }).join('');
-
-    peopleInCallEl.innerHTML = html;
-  }
-
-  const settingsEventSource = new EventSource('/settings/events');
-  settingsEventSource.onmessage = (event) => {
-    try {
-      const data = JSON.parse(event.data);
-      renderPeopleInCall(data.peopleInCall || []);
-    } catch (_) {
-      // Ignore malformed events to avoid breaking UI.
-    }
-  };
-
-  const showDisplayKeyBtn = document.getElementById('showDisplayKeyBtn');
-  const displayKeyValue = document.getElementById('displayKeyValue');
-  const copyDisplayUrlBtn = document.getElementById('copyDisplayUrlBtn');
-  const copyDisplayUrlStatus = document.getElementById('copyDisplayUrlStatus');
-  const displayUrl = <%- JSON.stringify(displayUrl || '') %>;
-  if (showDisplayKeyBtn && displayKeyValue) {
-    showDisplayKeyBtn.addEventListener('click', () => {
-      displayKeyValue.style.display = '';
-      showDisplayKeyBtn.style.display = 'none';
-    });
-  }
-  if (copyDisplayUrlBtn && displayUrl) {
-    copyDisplayUrlBtn.addEventListener('click', async () => {
-      try {
-        await navigator.clipboard.writeText(displayUrl);
-      } catch (_) {
-        const tempEl = document.createElement('textarea');
-        tempEl.value = displayUrl;
-        document.body.appendChild(tempEl);
-        tempEl.select();
-        document.execCommand('copy');
-        document.body.removeChild(tempEl);
-      }
-      if (copyDisplayUrlStatus) {
-        copyDisplayUrlStatus.style.display = '';
-        setTimeout(() => { copyDisplayUrlStatus.style.display = 'none'; }, 1200);
-      }
-    });
-  }
-</script>
+<script src="/static/js/settings.js"></script>

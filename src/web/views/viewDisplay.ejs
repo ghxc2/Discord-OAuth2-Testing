@@ -1,5 +1,7 @@
-<script>
-  window.__INITIAL_DISPLAY_USERS__ = <%- JSON.stringify(users || []) %>;
-  window.__VOICE_EVENT_PATH__ = <%- JSON.stringify(voiceEventPath || '/voice/events') %>;
-</script>
+<link rel="stylesheet" href="/static/css/app.css">
+<div
+  id="viewDisplayRoot"
+  data-initial-users="<%- encodeURIComponent(JSON.stringify(users || [])) %>"
+  data-voice-event-path="<%- encodeURIComponent(voiceEventPath || '/voice/events') %>"
+></div>
 <script src="/static/js/viewDisplay.js"></script>

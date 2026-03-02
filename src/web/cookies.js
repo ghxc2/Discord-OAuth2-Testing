@@ -2,28 +2,31 @@ const { checkToken } = require('./users')
 
 // Determines If Response has Valid Username Cookie
 function hasCookieUserID(req) {
-    const userID = req.cookies?.userID;
+    const userID = req.session?.userID;
     return !!userID
 }
 
 // Builds UserID Cookie
-function buildCookieUserID(res, userID, days) {
+async function buildCookieUserID(req, userID, days) {
     const age = days * 24 * 60 * 60 * 1000
-    res.cookie('userID', userID, {
-        maxAge: age,
-        httpOnly: true,
-        sameSite: 'lax',
+    await new Promise((resolve, reject) => {
+        req.session.regenerate((err) => {
+            if (err) return reject(err)
+            req.session.userID = userID
+            req.session.cookie.maxAge = age
+            return resolve()
+        })
     })
 }
 
 // Returns Value of UserID in Cookie
 function getCookieUsername(req) {
-    return req.cookies?.userID
+    return req.session?.userID
 }
 
 // Validates user cookie and token freshness
 async function validateCookie(req, res) {
-    const userID = req.cookies?.userID;
+    const userID = req.session?.userID;
     if (!userID) {
         res.redirect('/error')
         throw new Error("Invalid ID")

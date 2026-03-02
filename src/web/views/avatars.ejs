@@ -1,11 +1,14 @@
+<link rel="stylesheet" href="/static/css/app.css">
+
+<div id="avatarsPage" data-owner-user-id="<%= ownerUserId %>">
 <h1>Hello, <%= username %>, Welcome to /avatars</h1>
 <h2>Create Avatar Set</h2>
 
 <form
+  id="createAvatarSetForm"
   method="post"
   action="/avatars/<%= ownerUserId %>/PLACEHOLDER"
   enctype="multipart/form-data"
-  onsubmit="this.action = `/avatars/<%= ownerUserId %>/${encodeURIComponent(this.assetId.value)}`;"
 >
   <label for="assetId">Set Name</label>
   <input
@@ -45,7 +48,7 @@
                   alt="<%= `${asset.assetId}-${type}` %>"
                   width="64"
                   height="64"
-                  style="object-fit: cover; border-radius: 6px;"
+                  class="avatar-thumb avatar-thumb-64"
                 />
               <% } else { %>
                 -
@@ -53,14 +56,13 @@
             </td>
           <% }) %>
           <td>
-            <form method="get" action="/avatars/<%= ownerUserId %>/<%= asset.assetId %>/edit" style="display:inline;">
+            <form method="get" action="/avatars/<%= ownerUserId %>/<%= asset.assetId %>/edit" class="inline-form">
               <button type="submit">Edit</button>
             </form>
             <form
               method="post"
               action="/avatars/<%= ownerUserId %>/<%= asset.assetId %>/delete"
-              style="display:inline;"
-              onsubmit="return confirm('Delete this avatar set and all its images?');"
+              class="inline-form js-confirm-delete-avatar-set"
             >
               <button type="submit">Delete</button>
             </form>
@@ -72,3 +74,5 @@
 <% } else { %>
   <p>No uploaded avatars found.</p>
 <% } %>
+</div>
+<script src="/static/js/avatarsPage.js"></script>

@@ -2,15 +2,19 @@
 require('dotenv').config();
 const express = require('express');
 const cookieParser = require('cookie-parser');
+const session = require('express-session')
+const helmet = require('helmet')
 const path = require('path');
 const fs = require('fs')
+const crypto = require('crypto')
 const sharp = require('sharp')
 
 // Current Project Imports
 const { validateUser, refreshUser, isTokenExpired, getUserNameFromUserID } = require('./users');
 const { getCookieUsername, buildCookieUserID, validateCookie } = require('./cookies');
-const { getConfigsForOwner, saveAvatarPath } = require('./database/userConfigDatabase')
+const { getConfigsForOwner, saveAvatarPath, getAvatarPath } = require('./database/userConfigDatabase')
 const { getUserById, getUserByDisplayKey, rotateDisplayKey } = require('./database/userDatabase')
+const { createSqliteSessionStore } = require('./database/sessionStore')
 const {
     handleUpload,
     handleEditUpload,
@@ -21,6 +25,10 @@ const {
     getAvatarOrDefault,
     generateDefaultAvatarsForUser,
 } = require('./avatars/avatars')
+const SAFE_PARAM_RE = /^[A-Za-z0-9_-]{1,64}$/
+const SAFE_FILE_RE = /^[A-Za-z0-9_-]{1,128}\.(png|jpe?g|gif)$/i
+const ALLOWED_AVATAR_TYPES = new Set(['avatar', 'speaking', 'muted', 'deafened'])
+const uploadRoot = path.join(__dirname, 'user-data', 'uploads')
 
 async function bufferToDataUrl(buffer) {
     if (!buffer) return null
@@ -66,23 +74,240 @@ function pickAvatarForState(avatarSet, state = {}) {
     return safeSet.avatar || safeSet.default || safeSet.speaking || null
 }
 
+function isSafeParam(value) {
+    return typeof value === 'string' && SAFE_PARAM_RE.test(value)
+}
+
+function getClientKey(req) {
+    const trustProxy = !!req.app?.get('trust proxy')
+    if (trustProxy) {
+        const forwardedFor = req.headers['x-forwarded-for']
+        if (typeof forwardedFor === 'string' && forwardedFor.trim()) {
+            return forwardedFor.split(',')[0].trim()
+        }
+    }
+    return req.ip || req.socket?.remoteAddress || 'unknown'
+}
+
+function createFixedWindowRateLimiter({ windowMs, maxRequests, keyFn }) {
+    const buckets = new Map()
+    const maxBuckets = 5000
+    let lastSweepAt = 0
+
+    function sweepExpired(now) {
+        if (now - lastSweepAt < windowMs) return
+        lastSweepAt = now
+        for (const [bucketKey, bucket] of buckets.entries()) {
+            if (!bucket || now >= bucket.resetAt) {
+                buckets.delete(bucketKey)
+            }
+        }
+        if (buckets.size <= maxBuckets) return
+        const overflow = buckets.size - maxBuckets
+        let removed = 0
+        for (const [bucketKey] of buckets.entries()) {
+            buckets.delete(bucketKey)
+            removed += 1
+            if (removed >= overflow) break
+        }
+    }
+
+    return (req, res, next) => {
+        const now = Date.now()
+        sweepExpired(now)
+        const key = keyFn(req)
+        const existing = buckets.get(key)
+
+        if (!existing || now >= existing.resetAt) {
+            buckets.set(key, { count: 1, resetAt: now + windowMs })
+            return next()
+        }
+
+        if (existing.count >= maxRequests) {
+            const retryAfter = Math.max(1, Math.ceil((existing.resetAt - now) / 1000))
+            res.setHeader('Retry-After', String(retryAfter))
+            return res.status(429).send('Too Many Requests')
+        }
+
+        existing.count += 1
+        return next()
+    }
+}
+
+function getUploadFilePath({ userId, assetId, fileName }) {
+    if (!isSafeParam(userId) || !isSafeParam(assetId) || !SAFE_FILE_RE.test(fileName || '')) {
+        return null
+    }
+    const parsedName = path.parse(fileName).name
+    if (!parsedName.startsWith(`${assetId}_`)) {
+        return null
+    }
+    const ownerRoot = path.resolve(uploadRoot, userId)
+    const candidatePath = path.resolve(ownerRoot, assetId, fileName)
+    if (!candidatePath.startsWith(ownerRoot + path.sep)) {
+        return null
+    }
+    return candidatePath
+}
+
+function buildUploadSignature({ sessionSecret, userId, assetId, fileName, exp }) {
+    return crypto
+        .createHmac('sha256', sessionSecret)
+        .update(`${userId}:${assetId}:${fileName}:${exp}`)
+        .digest('hex')
+}
+
+function hasValidUploadSignature({ sessionSecret, userId, assetId, fileName, exp, sig }) {
+    if (!sig || typeof sig !== 'string') return false
+    const expected = buildUploadSignature({ sessionSecret, userId, assetId, fileName, exp })
+    const expectedBuf = Buffer.from(expected, 'utf8')
+    const providedBuf = Buffer.from(sig, 'utf8')
+    if (expectedBuf.length !== providedBuf.length) return false
+    return crypto.timingSafeEqual(expectedBuf, providedBuf)
+}
+
+function parseUploadPathForIds(inputPath) {
+    if (!inputPath || typeof inputPath !== 'string') return null
+    const parts = path.normalize(inputPath).split(path.sep)
+    const uploadsIdx = parts.lastIndexOf('uploads')
+    if (uploadsIdx === -1 || parts.length < uploadsIdx + 3) return null
+    const userId = parts[uploadsIdx + 1]
+    const assetId = parts[uploadsIdx + 2]
+    if (!isSafeParam(userId) || !isSafeParam(assetId)) return null
+    return { userId, assetId }
+}
+
+function buildSignedUploadUrl({ sessionSecret, userId, assetId, fileName, ttlMs = 5 * 60 * 1000 }) {
+    const exp = Date.now() + ttlMs
+    const sig = buildUploadSignature({ sessionSecret, userId, assetId, fileName, exp })
+    return `/public/uploads/${encodeURIComponent(userId)}/${encodeURIComponent(assetId)}/${encodeURIComponent(fileName)}?exp=${encodeURIComponent(exp)}&sig=${encodeURIComponent(sig)}`
+}
+
+function findAssetTypeToFileMap({ userId, assetId }) {
+    const result = {}
+    const assetDir = path.resolve(uploadRoot, userId, assetId)
+    if (!assetDir.startsWith(path.resolve(uploadRoot, userId) + path.sep)) return result
+    if (!fs.existsSync(assetDir)) return result
+
+    const files = fs.readdirSync(assetDir, { withFileTypes: true })
+    for (const entry of files) {
+        if (!entry.isFile()) continue
+        const fileName = entry.name
+        if (!SAFE_FILE_RE.test(fileName)) continue
+
+        const parsed = path.parse(fileName)
+        if (!parsed.name.startsWith(`${assetId}_`)) continue
+        const assetType = parsed.name.slice(assetId.length + 1)
+        if (!ALLOWED_AVATAR_TYPES.has(assetType)) continue
+        result[assetType] = fileName
+    }
+    return result
+}
+
+function withSignedAvatarSet({ users, ownerUserId, sessionSecret }) {
+    return (users || []).map((u) => {
+        const configuredAvatarPath = getAvatarPath(ownerUserId, u.userId)
+        const parsed = parseUploadPathForIds(configuredAvatarPath)
+        if (!parsed || parsed.userId !== ownerUserId) return u
+
+        const typeToFile = findAssetTypeToFileMap({
+            userId: parsed.userId,
+            assetId: parsed.assetId,
+        })
+        if (!Object.keys(typeToFile).length) return u
+
+        const signedSet = {}
+        for (const [assetType, fileName] of Object.entries(typeToFile)) {
+            signedSet[assetType] = buildSignedUploadUrl({
+                sessionSecret,
+                userId: parsed.userId,
+                assetId: parsed.assetId,
+                fileName,
+            })
+        }
+
+        const nextAvatarSet = {
+            ...(u.avatarSet || {}),
+            ...signedSet,
+        }
+        return {
+            ...u,
+            avatarSet: nextAvatarSet,
+            avatarUrl: pickAvatarForState(nextAvatarSet, u) || u.avatarUrl || null,
+        }
+    })
+}
+
 function setupWeb({ app }) {
     // Setup View Engine
     app.set('view engine', 'ejs');
     app.set('views', path.join(__dirname, './views'));
     app.use(express.urlencoded({ extended: true }));
+    app.use(helmet({
+        contentSecurityPolicy: {
+            useDefaults: true,
+            directives: {
+                defaultSrc: ["'self'"],
+                scriptSrc: ["'self'"],
+                styleSrc: ["'self'"],
+                imgSrc: ["'self'", "data:", "blob:", "https:"],
+                connectSrc: ["'self'"],
+                objectSrc: ["'none'"],
+                baseUri: ["'self'"],
+                formAction: ["'self'"],
+                frameAncestors: ["'self'"],
+                upgradeInsecureRequests: null,
+            },
+        },
+    }))
 
     // Allows App to use Cookies
     app.use(cookieParser())
+    const sessionSecret = process.env.SESSION_SECRET
+    if (!sessionSecret) {
+        throw new Error('SESSION_SECRET is required')
+    }
+    app.use(session({
+        name: 'sid',
+        secret: sessionSecret,
+        store: createSqliteSessionStore(session),
+        resave: false,
+        saveUninitialized: false,
+        cookie: {
+            httpOnly: true,
+            sameSite: 'lax',
+            secure: process.env.NODE_ENV === 'production',
+            maxAge: 7 * 24 * 60 * 60 * 1000,
+        },
+    }))
+
+    const oauthRateLimit = createFixedWindowRateLimiter({
+        windowMs: 60 * 1000,
+        maxRequests: 30,
+        keyFn: (req) => getClientKey(req),
+    })
+    const publicDisplayRateLimit = createFixedWindowRateLimiter({
+        windowMs: 60 * 1000,
+        maxRequests: 60,
+        keyFn: (req) => getClientKey(req),
+    })
+    const publicUploadsRateLimit = createFixedWindowRateLimiter({
+        windowMs: 60 * 1000,
+        maxRequests: 180,
+        keyFn: (req) => getClientKey(req),
+    })
 
     // Home Page
     app.get('/', async (req, res) => {
-        res.send("Welcome")
+        const oauthState = crypto.randomBytes(24).toString('hex')
+        req.session.oauthState = oauthState
+        const authUrl = `https://discord.com/oauth2/authorize?client_id=${process.env.WEB_CLIENT_ID}&response_type=code&redirect_uri=http%3A%2F%2Flocalhost%3A1500%2Fapi%2Fauth%2Fdiscord%2Fredirect&scope=identify+guilds+connections+email+guilds.join+gdm.join&state=${encodeURIComponent(oauthState)}`
+        res.send(`Welcome. <a href="${authUrl}">Login with Discord</a>`)
     })
 
     // Page Directed To From Discord Link
-    app.get('/api/auth/discord/redirect', async (req, res) => {
-        const { code, error } = req.query;
+    app.get('/api/auth/discord/redirect', oauthRateLimit, async (req, res) => {
+        const { code, error, state } = req.query;
         let userID = getCookieUsername(req)
 
         if (error) {
@@ -92,6 +317,14 @@ function setupWeb({ app }) {
         }
 
         try {
+            const expectedState = req.session?.oauthState
+            if (!state || !expectedState || state !== expectedState) {
+                consoleLogger("OAuth state mismatch")
+                redirectError(res)
+                return
+            }
+            delete req.session.oauthState
+
             // Existing session flow
             if (userID) {
                 if (isTokenExpired(userID)) {
@@ -112,8 +345,8 @@ function setupWeb({ app }) {
                 }
             }
 
-            buildCookieUserID(res, userID, 7)
-            res.send(`Hello, ${getUserNameFromUserID(userID)}`)
+            await buildCookieUserID(req, userID, 7)
+            res.redirect('/voice')
         } catch (e) {
             console.error("OAuth callback failed:", e.message)
             redirectError(res)
@@ -180,14 +413,18 @@ function setupWeb({ app }) {
         
     })
 
-    app.get('/voice/display/:key', async (req, res) => {
+    app.get('/voice/display/:key', publicDisplayRateLimit, async (req, res) => {
         try {
             const key = (req.params.key || '').trim()
             const owner = key ? getUserByDisplayKey(key) : null
             if (!owner?.user_id) {
                 return res.status(404).send('Not Found')
             }
-            const users = await buildVoiceUsersForOwner(owner.user_id)
+            const users = withSignedAvatarSet({
+                users: await buildVoiceUsersForOwner(owner.user_id),
+                ownerUserId: owner.user_id,
+                sessionSecret,
+            })
             res.render('viewDisplay', {
                 users,
                 voiceEventPath: `/voice/events/${encodeURIComponent(key)}`,
@@ -197,18 +434,13 @@ function setupWeb({ app }) {
         }
     })
 
-    // Voice Display using Key to retrieve user info
-    // Allows for external display pages to retrieve avatar info without needing to authenticate with cookie
-    app.get('/voice/display/:displayKey', async (req, res) => {
-        // here
-    })
-
     app.get('/voice/status', async (req, res) => {
         try {
             const userID = await validateCookie(req, res)
             const voiceStatus = await app.locals.botClient.isBotInSameVoiceChannel(userID)
             return res.json({ voiceStatus })
         } catch (err) {
+            if (res.headersSent) return
             return res.status(401).json({ error: 'Unauthorized' })
         }
     })
@@ -220,12 +452,57 @@ function setupWeb({ app }) {
 
     // Error Page
     app.get('/error', async (req, res) => {
-        res.send(`Please Login Using this <a href='https://discord.com/oauth2/authorize?client_id=${process.env.WEB_CLIENT_ID}&response_type=code&redirect_uri=http%3A%2F%2Flocalhost%3A1500%2Fapi%2Fauth%2Fdiscord%2Fredirect&scope=identify+guilds+connections+email+guilds.join+gdm.join'>link</a>`)
+        const oauthState = crypto.randomBytes(24).toString('hex')
+        req.session.oauthState = oauthState
+        res.send(`Please Login Using this <a href='https://discord.com/oauth2/authorize?client_id=${process.env.WEB_CLIENT_ID}&response_type=code&redirect_uri=http%3A%2F%2Flocalhost%3A1500%2Fapi%2Fauth%2Fdiscord%2Fredirect&scope=identify+guilds+connections+email+guilds.join+gdm.join&state=${encodeURIComponent(oauthState)}'>link</a>`)
     })
     
+    app.get('/uploads/:userId/:assetId/:fileName', async (req, res) => {
+        try {
+            const ownerUserId = await validateCookie(req, res)
+            const { userId, assetId, fileName } = req.params
+            if (ownerUserId !== userId) {
+                return res.status(403).send('Forbidden')
+            }
+            const filePath = getUploadFilePath({ userId, assetId, fileName })
+            if (!filePath || !fs.existsSync(filePath)) {
+                return res.status(404).send('Not Found')
+            }
+            return res.sendFile(filePath)
+        } catch (err) {
+            if (res.headersSent) return
+            return res.status(401).send('Unauthorized')
+        }
+    })
+
+    app.get('/public/uploads/:userId/:assetId/:fileName', publicUploadsRateLimit, async (req, res) => {
+        const { userId, assetId, fileName } = req.params
+        const exp = Number(req.query.exp || 0)
+        const sig = String(req.query.sig || '')
+        if (!Number.isFinite(exp) || exp <= Date.now()) {
+            return res.status(403).send('Expired')
+        }
+        const filePath = getUploadFilePath({ userId, assetId, fileName })
+        if (!filePath || !fs.existsSync(filePath)) {
+            return res.status(404).send('Not Found')
+        }
+        const isValidSig = hasValidUploadSignature({
+            sessionSecret,
+            userId,
+            assetId,
+            fileName,
+            exp,
+            sig,
+        })
+        if (!isValidSig) {
+            return res.status(403).send('Forbidden')
+        }
+        res.setHeader('Cache-Control', 'private, max-age=60')
+        return res.sendFile(filePath)
+    })
+
     // Static Files
     app.use('/static', express.static(path.join(__dirname, 'public')));
-    app.use('/uploads', express.static(path.join(__dirname, 'user-data', 'uploads')));
     app.locals.settingsStreams = app.locals.settingsStreams || new Map()
 
     async function buildSettingsData(ownerUserId) {
@@ -360,6 +637,7 @@ function setupWeb({ app }) {
                 }
             })
         } catch (err) {
+            if (res.headersSent) return
             return res.status(401).end()
         }
     })
@@ -408,6 +686,9 @@ function setupWeb({ app }) {
 
             let avatarPath = null
             if (selectedAssetId && selectedAssetId !== 'default') {
+                if (!isSafeParam(selectedAssetId)) {
+                    return res.status(400).send('Invalid avatar set')
+                }
                 const candidatePath = path.join(__dirname, 'user-data', 'uploads', ownerUserId, selectedAssetId)
                 if (candidatePath.startsWith(path.join(__dirname, 'user-data', 'uploads', ownerUserId)) && fs.existsSync(candidatePath)) {
                     avatarPath = candidatePath
@@ -420,6 +701,7 @@ function setupWeb({ app }) {
                 avatarPath,
             })
             app.locals.pushVoiceUpdate?.(ownerUserId).catch(() => {})
+            app.locals.pushKeyedVoiceUpdateAll?.().catch(() => {})
             app.locals.pushSettingsUpdate?.(ownerUserId).catch(() => {})
 
             return res.redirect(`/settings/${targetUserId}/edit`)
@@ -463,7 +745,13 @@ function setupWeb({ app }) {
                 return res.status(403).send('Forbidden');
             }
             const { userId, assetId } = req.params
+            if (!isSafeParam(userId) || !isSafeParam(assetId)) {
+                return res.status(400).send('Invalid path');
+            }
             deleteAvatarDirectory(userId, assetId)
+            app.locals.pushVoiceUpdate?.(ownerUserId).catch(() => {})
+            app.locals.pushKeyedVoiceUpdateAll?.().catch(() => {})
+            app.locals.pushSettingsUpdate?.(ownerUserId).catch(() => {})
             return res.redirect('/avatars')
         } catch (err) {
             return res.status(500).send('Internal Server Error');
@@ -476,6 +764,9 @@ function setupWeb({ app }) {
             const ownerUserId = await validateCookie(req, res)
             if (ownerUserId !== req.params.userId) {
                 return res.status(403).send('Forbidden');
+            }
+            if (!isSafeParam(req.params.userId) || !isSafeParam(req.params.assetId)) {
+                return res.status(400).send('Invalid path');
             }
 
             return handleEditUpload(req, res);
@@ -492,7 +783,13 @@ function setupWeb({ app }) {
                 return res.status(403).send('Forbidden');
             }
             const { userId, assetId, assetType } = req.params
+            if (!isSafeParam(userId) || !isSafeParam(assetId) || !ALLOWED_AVATAR_TYPES.has(assetType)) {
+                return res.status(400).send('Invalid path');
+            }
             deleteAvatarTypeFile(userId, assetId, assetType)
+            app.locals.pushVoiceUpdate?.(ownerUserId).catch(() => {})
+            app.locals.pushKeyedVoiceUpdateAll?.().catch(() => {})
+            app.locals.pushSettingsUpdate?.(ownerUserId).catch(() => {})
             return res.redirect(`/avatars/${userId}/${assetId}/edit`)
         } catch (err) {
             return res.status(500).send('Internal Server Error');
@@ -505,6 +802,9 @@ function setupWeb({ app }) {
             const ownerUserId = await validateCookie(req, res)
             if (ownerUserId !== req.params.userId) {
                 return res.status(403).send('Forbidden');
+            }
+            if (!isSafeParam(req.params.userId) || !isSafeParam(req.params.assetId) || !ALLOWED_AVATAR_TYPES.has(req.params.assetType)) {
+                return res.status(400).send('Invalid path');
             }
 
             return handleUpload(req, res);
@@ -522,6 +822,9 @@ function setupWeb({ app }) {
             }
 
             const { userId, assetId } = req.params
+            if (!isSafeParam(userId) || !isSafeParam(assetId)) {
+                return res.status(400).send('Invalid path');
+            }
             createAvatarDirectory(userId, assetId)
             return res.redirect(`/avatars/${userId}/${assetId}/edit`)
         } catch (err) {
@@ -538,6 +841,9 @@ function setupWeb({ app }) {
             }
 
             const { assetId } = req.params
+            if (!isSafeParam(req.params.userId) || !isSafeParam(assetId)) {
+                return res.status(400).send('Invalid path');
+            }
             const avatars = getAllAvatarsForUser(ownerUserId)
             const asset = avatars.find((a) => a.assetId === assetId)
             const assetsByType = Object.fromEntries(
@@ -578,6 +884,43 @@ function setupVoiceEvent({ app, client }) {
         return app.locals.voiceStreamsByOwner.get(ownerUserId)
     }
 
+    app.locals.keyedVoiceStreamsByDisplayKey = app.locals.keyedVoiceStreamsByDisplayKey || new Map()
+    app.locals.voiceSseConnectionsByIp = app.locals.voiceSseConnectionsByIp || new Map()
+    app.locals.keyedVoiceSseConnectionsByIp = app.locals.keyedVoiceSseConnectionsByIp || new Map()
+    function getOrCreateKeyedVoiceStreamSet(displayKey) {
+        if (!app.locals.keyedVoiceStreamsByDisplayKey.has(displayKey)) {
+            app.locals.keyedVoiceStreamsByDisplayKey.set(displayKey, new Set())
+        }
+        return app.locals.keyedVoiceStreamsByDisplayKey.get(displayKey)
+    }
+
+    function claimSseConnection(map, key, maxPerKey) {
+        const current = map.get(key) || 0
+        if (current >= maxPerKey) return false
+        map.set(key, current + 1)
+        return true
+    }
+
+    function releaseSseConnection(map, key) {
+        const current = map.get(key) || 0
+        if (current <= 1) {
+            map.delete(key)
+            return
+        }
+        map.set(key, current - 1)
+    }
+
+    const authEventsRateLimit = createFixedWindowRateLimiter({
+        windowMs: 60 * 1000,
+        maxRequests: 120,
+        keyFn: (req) => getClientKey(req),
+    })
+    const keyedEventsRateLimit = createFixedWindowRateLimiter({
+        windowMs: 60 * 1000,
+        maxRequests: 60,
+        keyFn: (req) => getClientKey(req),
+    })
+
     async function pushVoiceUpdate(ownerUserId) {
         const streamSet = app.locals.voiceStreamsByOwner.get(ownerUserId)
         if (!streamSet || streamSet.size === 0) return
@@ -599,9 +942,40 @@ function setupVoiceEvent({ app, client }) {
         }
     }
 
+    async function pushKeyedVoiceUpdate(displayKey, ownerUserId) {
+        const streamSet = app.locals.keyedVoiceStreamsByDisplayKey.get(displayKey)
+        if (!streamSet || streamSet.size === 0) return
+
+        const users = await app.locals.buildVoiceUsersForOwner?.(ownerUserId).catch(() => [])
+        const signedUsers = withSignedAvatarSet({
+            users,
+            ownerUserId,
+            sessionSecret: process.env.SESSION_SECRET,
+        })
+        const usersById = Object.fromEntries((signedUsers || []).map((u) => [u.userId, u]))
+        const payload = `data: ${JSON.stringify({ type: 'state', users: usersById })}\n\n`
+
+        for (const stream of streamSet) {
+            stream.write(payload)
+        }
+    }
+
+    app.locals.pushKeyedVoiceUpdateAll = async () => {
+        const displayKeys = [...app.locals.keyedVoiceStreamsByDisplayKey.keys()]
+        for (const displayKey of displayKeys) {
+            const owner = getUserByDisplayKey(displayKey)
+            if (!owner?.user_id) continue
+            await pushKeyedVoiceUpdate(displayKey, owner.user_id)
+        }
+    }
+
     // /voice/events setup
-    app.get('/voice/events', async (req, res) => {
+    app.get('/voice/events', authEventsRateLimit, async (req, res) => {
         try {
+            const clientKey = getClientKey(req)
+            if (!claimSseConnection(app.locals.voiceSseConnectionsByIp, clientKey, 5)) {
+                return res.status(429).send('Too Many Open Connections')
+            }
             const ownerUserId = await validateCookie(req, res)
             res.setHeader('Content-Type', 'text/event-stream');
             res.setHeader('Cache-Control', 'no-cache');
@@ -615,23 +989,32 @@ function setupVoiceEvent({ app, client }) {
 
             req.on('close', () => {
                 const currentSet = app.locals.voiceStreamsByOwner.get(ownerUserId)
-                if (!currentSet) return
-                currentSet.delete(res)
-                if (currentSet.size === 0) {
+                if (currentSet) {
+                    currentSet.delete(res)
+                }
+                if (currentSet && currentSet.size === 0) {
                     app.locals.voiceStreamsByOwner.delete(ownerUserId)
                 }
+                releaseSseConnection(app.locals.voiceSseConnectionsByIp, clientKey)
             });
         } catch (err) {
+            releaseSseConnection(app.locals.voiceSseConnectionsByIp, getClientKey(req))
+            if (res.headersSent) return
             return res.status(401).end()
         }
     })
 
-    app.get('/voice/events/:key', async (req, res) => {
+    app.get('/voice/events/:key', keyedEventsRateLimit, async (req, res) => {
         try {
+            const clientKey = getClientKey(req)
+            if (!claimSseConnection(app.locals.keyedVoiceSseConnectionsByIp, clientKey, 3)) {
+                return res.status(429).send('Too Many Open Connections')
+            }
             const key = (req.params.key || '').trim()
             const owner = key ? getUserByDisplayKey(key) : null
             const ownerUserId = owner?.user_id || null
             if (!ownerUserId) {
+                releaseSseConnection(app.locals.keyedVoiceSseConnectionsByIp, clientKey)
                 return res.status(404).end()
             }
 
@@ -640,20 +1023,23 @@ function setupVoiceEvent({ app, client }) {
             res.setHeader('Connection', 'keep-alive');
             res.flushHeaders?.()
 
-            const streamSet = getOrCreateVoiceStreamSet(ownerUserId)
+            const streamSet = getOrCreateKeyedVoiceStreamSet(key)
             streamSet.add(res);
 
-            await pushVoiceUpdate(ownerUserId)
+            await pushKeyedVoiceUpdate(key, ownerUserId)
 
             req.on('close', () => {
-                const currentSet = app.locals.voiceStreamsByOwner.get(ownerUserId)
-                if (!currentSet) return
-                currentSet.delete(res)
-                if (currentSet.size === 0) {
-                    app.locals.voiceStreamsByOwner.delete(ownerUserId)
+                const currentSet = app.locals.keyedVoiceStreamsByDisplayKey.get(key)
+                if (currentSet) {
+                    currentSet.delete(res)
                 }
+                if (currentSet && currentSet.size === 0) {
+                    app.locals.keyedVoiceStreamsByDisplayKey.delete(key)
+                }
+                releaseSseConnection(app.locals.keyedVoiceSseConnectionsByIp, clientKey)
             });
         } catch (err) {
+            releaseSseConnection(app.locals.keyedVoiceSseConnectionsByIp, getClientKey(req))
             return res.status(500).end()
         }
     })
@@ -692,6 +1078,7 @@ function setupVoiceEvent({ app, client }) {
 
         // Send owner-scoped voice payloads to browser
         app.locals.pushVoiceUpdateAll?.().catch(() => {});
+        app.locals.pushKeyedVoiceUpdateAll?.().catch(() => {});
         app.locals.pushSettingsUpdateAll?.().catch(() => {});
     }
 
@@ -700,6 +1087,7 @@ function setupVoiceEvent({ app, client }) {
     // Keep /settings live list in sync for join/leave/move events too.
     client.on('voiceStateUpdate', () => {
         app.locals.pushVoiceUpdateAll?.().catch(() => {});
+        app.locals.pushKeyedVoiceUpdateAll?.().catch(() => {});
         app.locals.pushSettingsUpdateAll?.().catch(() => {});
     });
 }
@@ -718,12 +1106,28 @@ function ensureUser({ app, evt }) {
     return users[evt.userId]
 }
 
+function resolveTrustProxySetting(rawValue) {
+    if (rawValue == null) return false
+    const value = String(rawValue).trim().toLowerCase()
+    if (!value || value === 'false' || value === '0' || value === 'off' || value === 'no') {
+        return false
+    }
+    if (value === 'true' || value === '1' || value === 'on' || value === 'yes') {
+        return true
+    }
+    if (/^\d+$/.test(value)) {
+        return Number(value)
+    }
+    return value
+}
+
 // App Start Logic
 function startWeb({ client }) {
 
     // App Variables
     const port = process.env.PORT || 1500;
     const app = express();
+    app.set('trust proxy', resolveTrustProxySetting(process.env.TRUST_PROXY))
     app.locals.botClient = client
     app.locals.users = {}
     setupWeb({ app })

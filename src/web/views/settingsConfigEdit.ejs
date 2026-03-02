@@ -1,3 +1,5 @@
+<link rel="stylesheet" href="/static/css/app.css">
+
 <h1>Hello, <%= username %>, User Config Edit</h1>
 <p>
   <a href="/settings">Back to Settings</a>
@@ -7,7 +9,7 @@
 </h2>
 
 <h3>Current Avatar</h3>
-<div style="padding: 12px; border: 1px solid #ddd; border-radius: 8px; display: inline-block;">
+<div class="settings-current-avatar-box">
   <% const currentTypes = ['avatar', 'speaking', 'muted', 'deafened']; %>
   <% const hasCurrentAvatar = currentAvatar && currentTypes.some((type) => !!currentAvatar[type]); %>
   <% if (hasCurrentAvatar) { %>
@@ -30,7 +32,7 @@
                   alt="<%= `current-${type}` %>"
                   width="96"
                   height="96"
-                  style="object-fit: cover; border-radius: 8px;"
+                  class="avatar-thumb avatar-thumb-96"
                 />
               <% } else { %>
                 -
@@ -41,7 +43,7 @@
       </tbody>
     </table>
   <% } else { %>
-    <p style="margin: 0;">No avatar available.</p>
+    <p class="settings-zero-margin">No avatar available.</p>
   <% } %>
 </div>
 
@@ -69,7 +71,7 @@
               alt="<%= `default-${type}` %>"
               width="64"
               height="64"
-              style="object-fit: cover; border-radius: 6px;"
+              class="avatar-thumb avatar-thumb-64"
             />
           <% } else { %>
             -
@@ -98,7 +100,7 @@
                   alt="<%= `${asset.assetId}-${type}` %>"
                   width="64"
                   height="64"
-                  style="object-fit: cover; border-radius: 6px;"
+                  class="avatar-thumb avatar-thumb-64"
                 />
               <% } else { %>
                 -

@@ -1,3 +1,5 @@
+<link rel="stylesheet" href="/static/css/app.css">
+
 <h1>Hello, <%= username %>, Welcome to /voice</h1>
 <p>
   <a href="/settings">Voice Settings</a>
@@ -25,7 +27,7 @@
             <th>Deaf</th>
         </tr>
     </thead>
-    <tbody id="voiceTableBody">
+    <tbody id="voiceTableBody" data-initial-users="<%- encodeURIComponent(JSON.stringify(users || [])) %>">
         <% if (users && users.length) { %>
             <% users.forEach((u) => { %>
                 <tr>
@@ -35,7 +37,7 @@
                         <% const src = (u.avatarSet && u.avatarSet[type]) || (type === 'avatar' ? u.avatarUrl : null); %>
                         <td>
                             <% if (src) { %>
-                                <img src="<%= src %>" alt="<%= `${u.username}-${type}` %>" width="128" height="128" style="object-fit: cover; border-radius: 8px;" />
+                                <img src="<%= src %>" alt="<%= `${u.username}-${type}` %>" width="128" height="128" class="avatar-thumb avatar-thumb-128" />
                             <% } else { %>
                                 -
                             <% } %>
@@ -54,20 +56,5 @@
     </tbody>
 
 </table>
-<style>
-  .voice-warning {
-    padding: 8px;
-    border: 1px solid #d97706;
-    background: #fef3c7;
-    color: #92400e;
-  }
-
-  .is-hidden {
-    display: none;
-  }
-</style>
-<script>
-  window.__INITIAL_VOICE_USERS__ = <%- JSON.stringify(users || []) %>;
-</script>
 <script src="/static/js/voice.js"></script>
 

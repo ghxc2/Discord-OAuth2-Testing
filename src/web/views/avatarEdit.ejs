@@ -1,3 +1,5 @@
+<link rel="stylesheet" href="/static/css/app.css">
+
 <h1>Hello, <%= username %>, Edit Avatar Set</h1>
 <p>
   <a href="/avatars">Back to Avatars</a>
@@ -33,7 +35,7 @@
                 alt="<%= `${assetId}-${type}` %>"
                 width="80"
                 height="80"
-                style="object-fit: cover; border-radius: 6px;"
+                class="avatar-thumb avatar-thumb-80"
               />
             <% } else { %>
               -
@@ -56,14 +58,14 @@
               method="post"
               action="/avatars/<%= ownerUserId %>/<%= assetId %>/<%= type %>"
               enctype="multipart/form-data"
-              style="display:inline;"
+              class="inline-form"
             >
               <input
                 id="<%= type %>File"
                 name="avatars"
                 type="file"
                 accept="image/png,image/jpeg,image/gif"
-                onchange="this.form.submit()"
+                class="js-auto-submit-upload"
               />
             </form>
           </td>
@@ -77,8 +79,7 @@
             <form
               method="post"
               action="/avatars/<%= ownerUserId %>/<%= assetId %>/<%= type %>/delete"
-              style="display:inline;"
-              onsubmit="return confirm('Delete this image type from the set?');"
+              class="inline-form js-confirm-delete-avatar-type"
             >
               <button type="submit" <%= item ? '' : 'disabled' %>>
                 Delete
@@ -89,3 +90,4 @@
       </tr>
     </tbody>
   </table>
+<script src="/static/js/avatarEditPage.js"></script>

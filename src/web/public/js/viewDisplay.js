@@ -1,4 +1,7 @@
 const usersById = {};
+const root = document.getElementById('viewDisplayRoot') || document.body || document.documentElement;
+const initialUsersEncoded = root?.dataset?.initialUsers || '';
+const streamPathEncoded = root?.dataset?.voiceEventPath || '';
 
 function pickAvatarForState(avatarSet, state) {
   const safeSet = avatarSet || {};
@@ -13,7 +16,6 @@ function pickAvatarForState(avatarSet, state) {
 }
 
 function renderDisplay() {
-  const root = document.body || document.documentElement;
   if (!root) return;
   const users = Object.values(usersById);
 
@@ -29,16 +31,24 @@ function renderDisplay() {
     img.alt = `${u.username || u.userId || 'user'} avatar`;
     img.width = 300;
     img.height = 300;
-    img.style.marginRight = '20px';
-    img.style.marginBottom = '20px';
+    img.className = 'display-avatar';
     img.setAttribute('data-display-avatar', '1');
     fragment.appendChild(img);
   });
   root.appendChild(fragment);
 }
 
-if (Array.isArray(window.__INITIAL_DISPLAY_USERS__)) {
-  window.__INITIAL_DISPLAY_USERS__.forEach((u) => {
+const initialUsers = (() => {
+  if (!initialUsersEncoded) return [];
+  try {
+    return JSON.parse(decodeURIComponent(initialUsersEncoded));
+  } catch (_) {
+    return [];
+  }
+})();
+
+if (Array.isArray(initialUsers)) {
+  initialUsers.forEach((u) => {
     usersById[u.userId] = u;
   });
 }
@@ -49,7 +59,7 @@ if (document.readyState === 'loading') {
   renderDisplay();
 }
 
-const streamPath = window.__VOICE_EVENT_PATH__ || '/voice/events';
+const streamPath = streamPathEncoded ? decodeURIComponent(streamPathEncoded) : '/voice/events';
 const stream = new EventSource(streamPath);
 
 stream.onmessage = (msg) => {
